@@ -1,0 +1,8 @@
+[Xfce Panel]
+Type=X-XFCE-PanelPlugin
+Name=XFCE Ask
+Comment=Quick one-off questions in a popover
+Icon=help-browser
+X-XFCE-Module=openai-ask
+X-XFCE-Internal=FALSE
+X-XFCE-API=2.0
