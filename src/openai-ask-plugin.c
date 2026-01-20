@@ -17,6 +17,7 @@ struct _OpenaiAskPlugin
   GtkWidget *container;
   GtkWidget *entry;
   GtkWidget *popup;
+  GtkWidget *frame;
   GtkWidget *header;
   GtkWidget *scrolled;
   GtkWidget *popover_title;
@@ -24,6 +25,7 @@ struct _OpenaiAskPlugin
   GtkWidget *popover_spinner;
   GtkWidget *popover_label;
   guint relayout_source_id;
+  GtkCssProvider *frame_css;
 
   GCancellable *request_cancellable;
   gboolean request_in_flight;
@@ -36,6 +38,7 @@ struct _OpenaiAskPlugin
   gdouble temperature;
   gint width_chars;
   gint reply_width_px; /* 0 = match anchor width */
+  gint reply_opacity_pct; /* 0..100, affects background only */
 };
 
 struct _OpenaiAskPluginClass
@@ -55,6 +58,7 @@ static const gchar *KF_SYSTEM_PROMPT = "system_prompt";
 static const gchar *KF_TEMPERATURE = "temperature";
 static const gchar *KF_WIDTH_CHARS = "width_chars";
 static const gchar *KF_REPLY_WIDTH_PX = "reply_width_px";
+static const gchar *KF_REPLY_OPACITY_PCT = "reply_opacity_pct";
 
 static void
 openai_ask_plugin_apply_css(OpenaiAskPlugin *self)
@@ -88,6 +92,27 @@ openai_ask_plugin_apply_css(OpenaiAskPlugin *self)
   GdkScreen *screen = gdk_screen_get_default();
   gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   g_object_unref(provider);
+}
+
+static void
+openai_ask_plugin_update_frame_opacity(OpenaiAskPlugin *self)
+{
+  if (!self->frame || !self->frame_css)
+    return;
+
+  gint pct = CLAMP(self->reply_opacity_pct, 0, 100);
+  gdouble alpha = ((gdouble)pct) / 100.0;
+
+  g_autofree gchar *css = g_strdup_printf(
+    "#openai-ask-frame {"
+    "  background-color: alpha(@theme_base_color, %.3f);"
+    "  border-color: alpha(@borders, %.3f);"
+    "}",
+    alpha,
+    MAX(0.0, MIN(1.0, alpha)));
+
+  gtk_css_provider_load_from_data(self->frame_css, css, -1, NULL);
+  gtk_widget_queue_draw(self->frame);
 }
 
 static void
@@ -683,6 +708,7 @@ openai_ask_plugin_load_settings(OpenaiAskPlugin *self)
   self->temperature = 0.7;
   self->width_chars = 18;
   self->reply_width_px = 0;
+  self->reply_opacity_pct = 100;
 
   g_autofree gchar *rc = xfce_panel_plugin_save_location(XFCE_PANEL_PLUGIN(self), FALSE);
   if (!rc)
@@ -722,6 +748,9 @@ openai_ask_plugin_load_settings(OpenaiAskPlugin *self)
 
   if (g_key_file_has_key(kf, KF_GROUP, KF_REPLY_WIDTH_PX, NULL))
     self->reply_width_px = g_key_file_get_integer(kf, KF_GROUP, KF_REPLY_WIDTH_PX, NULL);
+
+  if (g_key_file_has_key(kf, KF_GROUP, KF_REPLY_OPACITY_PCT, NULL))
+    self->reply_opacity_pct = g_key_file_get_integer(kf, KF_GROUP, KF_REPLY_OPACITY_PCT, NULL);
 }
 
 static void
@@ -738,6 +767,7 @@ openai_ask_plugin_save_settings(OpenaiAskPlugin *self)
   g_key_file_set_double(kf, KF_GROUP, KF_TEMPERATURE, self->temperature);
   g_key_file_set_integer(kf, KF_GROUP, KF_WIDTH_CHARS, self->width_chars);
   g_key_file_set_integer(kf, KF_GROUP, KF_REPLY_WIDTH_PX, self->reply_width_px);
+  g_key_file_set_integer(kf, KF_GROUP, KF_REPLY_OPACITY_PCT, self->reply_opacity_pct);
 
   gsize len = 0;
   g_autofree gchar *data = g_key_file_to_data(kf, &len, NULL);
@@ -811,6 +841,16 @@ openai_ask_plugin_show_configure(XfcePanelPlugin *plugin, gpointer user_data)
   gtk_grid_attach(GTK_GRID(grid), reply_width_label, 0, 5, 1, 1);
   gtk_grid_attach(GTK_GRID(grid), reply_width_spin, 1, 5, 1, 1);
 
+  GtkWidget *opacity_label = gtk_label_new("Reply opacity (%)");
+  gtk_widget_set_halign(opacity_label, GTK_ALIGN_END);
+  GtkAdjustment *opacity_adj = gtk_adjustment_new(self->reply_opacity_pct, 0.0, 100.0, 1.0, 5.0, 0.0);
+  GtkWidget *opacity_scale = gtk_scale_new(GTK_ORIENTATION_HORIZONTAL, opacity_adj);
+  gtk_scale_set_draw_value(GTK_SCALE(opacity_scale), TRUE);
+  gtk_scale_set_value_pos(GTK_SCALE(opacity_scale), GTK_POS_RIGHT);
+  gtk_widget_set_hexpand(opacity_scale, TRUE);
+  gtk_grid_attach(GTK_GRID(grid), opacity_label, 0, 6, 1, 1);
+  gtk_grid_attach(GTK_GRID(grid), opacity_scale, 1, 6, 1, 1);
+
   GtkWidget *key_label = gtk_label_new("API key (keyring)");
   gtk_widget_set_halign(key_label, GTK_ALIGN_END);
   GtkWidget *key_entry = gtk_entry_new();
@@ -823,9 +863,9 @@ openai_ask_plugin_show_configure(XfcePanelPlugin *plugin, gpointer user_data)
   gtk_box_pack_start(GTK_BOX(key_buttons), btn_save_key, FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(key_buttons), btn_clear_key, FALSE, FALSE, 0);
 
-  gtk_grid_attach(GTK_GRID(grid), key_label, 0, 6, 1, 1);
-  gtk_grid_attach(GTK_GRID(grid), key_entry, 1, 6, 1, 1);
-  gtk_grid_attach(GTK_GRID(grid), key_buttons, 1, 7, 1, 1);
+  gtk_grid_attach(GTK_GRID(grid), key_label, 0, 7, 1, 1);
+  gtk_grid_attach(GTK_GRID(grid), key_entry, 1, 7, 1, 1);
+  gtk_grid_attach(GTK_GRID(grid), key_buttons, 1, 8, 1, 1);
 
   OpenaiAskKeyDialogCtx key_ctx = {endpoint_entry, key_entry};
   g_signal_connect(btn_save_key, "clicked", G_CALLBACK(openai_ask_plugin_on_save_key_clicked), &key_ctx);
@@ -844,12 +884,15 @@ openai_ask_plugin_show_configure(XfcePanelPlugin *plugin, gpointer user_data)
     self->temperature = gtk_spin_button_get_value(GTK_SPIN_BUTTON(temp_spin));
     self->width_chars = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(width_spin));
     self->reply_width_px = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(reply_width_spin));
+    self->reply_opacity_pct = (gint)gtk_range_get_value(GTK_RANGE(opacity_scale));
     if (self->width_chars < 6)
       self->width_chars = 6;
     if (self->reply_width_px < 0)
       self->reply_width_px = 0;
+    self->reply_opacity_pct = CLAMP(self->reply_opacity_pct, 0, 100);
     if (self->entry)
       gtk_entry_set_width_chars(GTK_ENTRY(self->entry), self->width_chars);
+    openai_ask_plugin_update_frame_opacity(self);
     openai_ask_plugin_save_settings(self);
   }
   gtk_widget_destroy(dialog);
@@ -915,6 +958,12 @@ openai_ask_plugin_construct(XfcePanelPlugin *plugin)
   gtk_widget_set_hexpand(popover_box, TRUE);
   gtk_widget_set_vexpand(popover_box, TRUE);
   gtk_box_pack_start(GTK_BOX(outer), popover_box, TRUE, TRUE, 0);
+  self->frame = popover_box;
+  self->frame_css = gtk_css_provider_new();
+  gtk_style_context_add_provider(gtk_widget_get_style_context(self->frame),
+                                 GTK_STYLE_PROVIDER(self->frame_css),
+                                 GTK_STYLE_PROVIDER_PRIORITY_USER);
+  openai_ask_plugin_update_frame_opacity(self);
 
   self->header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
   gtk_widget_set_name(self->header, "openai-ask-header");
@@ -988,6 +1037,7 @@ openai_ask_plugin_dispose(GObject *object)
 
   openai_ask_plugin_cancel_inflight(self);
   g_clear_object(&self->request_cancellable);
+  g_clear_object(&self->frame_css);
 
   g_clear_pointer(&self->messages, g_ptr_array_unref);
 
@@ -1021,4 +1071,5 @@ openai_ask_plugin_init(OpenaiAskPlugin *self)
   self->temperature = 0.7;
   self->width_chars = 18;
   self->reply_width_px = 0;
+  self->reply_opacity_pct = 100;
 }

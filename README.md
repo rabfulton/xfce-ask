@@ -6,6 +6,8 @@ A small XFCE panel plugin for quick one-off questions to any OpenAI-compatible C
 
 Works with any OpenAI-compatible endpoint, including local/self-hosted ones. If your endpoint does not require auth, leave the API key blank.
 
+License: MIT (see `LICENSE`).
+
 ## Behavior
 
 - `Enter`: send the current prompt.
