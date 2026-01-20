@@ -17,26 +17,12 @@ Dependencies (dev headers): `gtk3`, `libxfce4panel`, `libsoup-3`, `json-glib`, `
 make
 ```
 
-### Meson (optional)
-
-```sh
-meson setup build --prefix="$HOME/.local"
-ninja -C build
-```
-
 ## Install (local)
 
 ### Make
 
 ```sh
 make install
-xfce4-panel -r
-```
-
-### Meson (optional)
-
-```sh
-ninja -C build install
 xfce4-panel -r
 ```
 
