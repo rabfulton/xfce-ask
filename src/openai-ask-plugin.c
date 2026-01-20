@@ -35,6 +35,7 @@ struct _OpenaiAskPlugin
   gchar *system_prompt;
   gdouble temperature;
   gint width_chars;
+  gint reply_width_px; /* 0 = match anchor width */
 };
 
 struct _OpenaiAskPluginClass
@@ -53,6 +54,7 @@ static const gchar *KF_MODEL = "model";
 static const gchar *KF_SYSTEM_PROMPT = "system_prompt";
 static const gchar *KF_TEMPERATURE = "temperature";
 static const gchar *KF_WIDTH_CHARS = "width_chars";
+static const gchar *KF_REPLY_WIDTH_PX = "reply_width_px";
 
 static void
 openai_ask_plugin_apply_css(OpenaiAskPlugin *self)
@@ -67,6 +69,9 @@ openai_ask_plugin_apply_css(OpenaiAskPlugin *self)
   gtk_css_provider_load_from_data(
     provider,
     "#openai-ask-popup {"
+    "  background-color: rgba(0,0,0,0);"
+    "}"
+    "#openai-ask-frame {"
     "  background-color: @theme_base_color;"
     "  border: 1px solid @borders;"
     "  border-radius: 10px;"
@@ -83,6 +88,23 @@ openai_ask_plugin_apply_css(OpenaiAskPlugin *self)
   GdkScreen *screen = gdk_screen_get_default();
   gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   g_object_unref(provider);
+}
+
+static void
+openai_ask_plugin_enable_transparency(GtkWidget *window)
+{
+  if (!GTK_IS_WIDGET(window))
+    return;
+
+  gtk_widget_set_app_paintable(window, TRUE);
+
+  GdkScreen *screen = gtk_widget_get_screen(window);
+  if (!screen)
+    return;
+
+  GdkVisual *visual = gdk_screen_get_rgba_visual(screen);
+  if (visual)
+    gtk_widget_set_visual(window, visual);
 }
 
 static gboolean
@@ -104,31 +126,102 @@ openai_ask_plugin_request_relayout(OpenaiAskPlugin *self)
     g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, openai_ask_plugin_relayout_idle, g_object_ref(self), g_object_unref);
 }
 
+static gboolean
+openai_ask_plugin_get_anchor_rect(OpenaiAskPlugin *self, GdkRectangle *out_rect)
+{
+  GtkWidget *plugin_widget = GTK_WIDGET(XFCE_PANEL_PLUGIN(self));
+  GtkWidget *toplevel = gtk_widget_get_toplevel(plugin_widget);
+  if (!GTK_IS_WIDGET(toplevel) || !gtk_widget_get_realized(toplevel))
+    return FALSE;
+
+  GdkWindow *top_win = gtk_widget_get_window(toplevel);
+  if (!top_win)
+    return FALSE;
+
+  gint top_x = 0;
+  gint top_y = 0;
+  gdk_window_get_origin(top_win, &top_x, &top_y);
+
+  gboolean have = FALSE;
+  GdkRectangle rect = {0};
+
+  /* Walk up a few levels and union allocations. This catches the panel's
+   * wrapper widgets that add padding around the plugin. */
+  GtkWidget *w = plugin_widget;
+  for (gint depth = 0; w && depth < 6; depth++)
+  {
+    GtkAllocation a = {0};
+    gtk_widget_get_allocation(w, &a);
+
+    gint rel_x = 0;
+    gint rel_y = 0;
+    if (gtk_widget_translate_coordinates(w, toplevel, 0, 0, &rel_x, &rel_y))
+    {
+      GdkRectangle r = {top_x + rel_x, top_y + rel_y, a.width, a.height};
+      if (!have)
+      {
+        rect = r;
+        have = TRUE;
+      }
+      else
+      {
+        gint x1 = MIN(rect.x, r.x);
+        gint y1 = MIN(rect.y, r.y);
+        gint x2 = MAX(rect.x + rect.width, r.x + r.width);
+        gint y2 = MAX(rect.y + rect.height, r.y + r.height);
+        rect.x = x1;
+        rect.y = y1;
+        rect.width = x2 - x1;
+        rect.height = y2 - y1;
+      }
+
+      openai_ask_log("anchor[%d] %s x=%d y=%d w=%d h=%d",
+                     depth,
+                     G_OBJECT_TYPE_NAME(w),
+                     r.x,
+                     r.y,
+                     r.width,
+                     r.height);
+    }
+
+    w = gtk_widget_get_parent(w);
+  }
+
+  if (!have)
+    return FALSE;
+
+  *out_rect = rect;
+  openai_ask_log("anchor union x=%d y=%d w=%d h=%d", rect.x, rect.y, rect.width, rect.height);
+  return TRUE;
+}
+
 static void
 openai_ask_plugin_move_popup_near_entry(OpenaiAskPlugin *self)
 {
-  if (!gtk_widget_get_realized(self->popup) || !gtk_widget_get_realized(self->entry))
+  GtkWidget *plugin_widget = GTK_WIDGET(XFCE_PANEL_PLUGIN(self));
+  if (!gtk_widget_get_realized(self->popup) || !gtk_widget_get_realized(plugin_widget))
     return;
 
-  GtkAllocation entry_alloc = {0};
-  gtk_widget_get_allocation(self->entry, &entry_alloc);
-
-  gint entry_x = 0;
-  gint entry_y = 0;
-  gdk_window_get_origin(gtk_widget_get_window(self->entry), &entry_x, &entry_y);
+  GdkRectangle anchor = {0};
+  if (!openai_ask_plugin_get_anchor_rect(self, &anchor))
+    return;
+  gint anchor_x = anchor.x;
+  gint anchor_y = anchor.y;
 
   XfceScreenPosition pos = xfce_panel_plugin_get_screen_position(XFCE_PANEL_PLUGIN(self));
   const gint gap = 6;
   const gint margin = 8;
-  const gint border = 20; /* popover_box border width (10px) top+bottom */
+  const gint border = 24; /* openai-ask-frame border width (12px) top+bottom */
   const gint spacing = 8; /* popover_box spacing */
 
-  /* Match the popup width to the entry width (as configured/allocated by the panel). */
-  gint popup_w = MAX(200, entry_alloc.width);
+  /* Match the popup width to the union of wrapper allocations unless overridden. */
+  gint popup_w = MAX(200, anchor.width);
+  if (self->reply_width_px > 0)
+    popup_w = self->reply_width_px;
   gint popup_h = 120;
 
-  gint x = entry_x;
-  gint y = entry_y + entry_alloc.height + gap;
+  gint x = anchor_x;
+  gint y = anchor_y + anchor.height + gap;
 
   /* Compute desired height from content natural height-for-width. */
   gint content_w = MAX(60, popup_w - border);
@@ -138,15 +231,21 @@ openai_ask_plugin_move_popup_near_entry(OpenaiAskPlugin *self)
     gint hmin = 0, hnat = 0;
     gtk_widget_get_preferred_height_for_width(self->header, content_w, &hmin, &hnat);
     header_h = MAX(hmin, hnat);
+    header_h += gtk_widget_get_margin_top(self->header) + gtk_widget_get_margin_bottom(self->header);
   }
 
   gint content_h = 0;
   GtkWidget *visible_child = gtk_stack_get_visible_child(GTK_STACK(self->popover_stack));
   if (visible_child == self->scrolled && self->popover_label)
   {
+    gint label_margin_h =
+      gtk_widget_get_margin_start(self->popover_label) + gtk_widget_get_margin_end(self->popover_label);
+    gint label_margin_v = gtk_widget_get_margin_top(self->popover_label) + gtk_widget_get_margin_bottom(self->popover_label);
+
+    gint label_w = MAX(20, content_w - label_margin_h);
     gint lmin = 0, lnat = 0;
-    gtk_widget_get_preferred_height_for_width(self->popover_label, content_w, &lmin, &lnat);
-    content_h = MAX(lmin, lnat);
+    gtk_widget_get_preferred_height_for_width(self->popover_label, label_w, &lmin, &lnat);
+    content_h = MAX(lmin, lnat) + label_margin_v;
   }
   else
   {
@@ -168,7 +267,7 @@ openai_ask_plugin_move_popup_near_entry(OpenaiAskPlugin *self)
   GdkDisplay *display = gdk_display_get_default();
   if (display)
   {
-    GdkMonitor *mon = gdk_display_get_monitor_at_point(display, entry_x, entry_y);
+    GdkMonitor *mon = gdk_display_get_monitor_at_point(display, anchor_x, anchor_y);
     if (mon)
     {
       GdkRectangle geo = {0};
@@ -178,31 +277,31 @@ openai_ask_plugin_move_popup_near_entry(OpenaiAskPlugin *self)
 
       if (xfce_screen_position_is_bottom(pos))
       {
-        max_h = (entry_y - geo.y) - gap - margin;
+        max_h = (anchor_y - geo.y) - gap - margin;
         popup_h = MIN(desired_h, MIN(MAX(120, max_h), max_h_fraction));
-        y = entry_y - popup_h - gap;
+        y = anchor_y - popup_h - gap;
       }
       else if (xfce_screen_position_is_top(pos))
       {
-        max_h = (geo.y + geo.height - (entry_y + entry_alloc.height)) - gap - margin;
+        max_h = (geo.y + geo.height - (anchor_y + anchor.height)) - gap - margin;
         popup_h = MIN(desired_h, MIN(MAX(120, max_h), max_h_fraction));
-        y = entry_y + entry_alloc.height + gap;
+        y = anchor_y + anchor.height + gap;
       }
       else if (xfce_screen_position_is_left(pos))
       {
-        x = entry_x + entry_alloc.width + gap;
+        x = anchor_x + anchor.width + gap;
         max_h = geo.height - 2 * margin;
         popup_h = MIN(desired_h, MIN(MAX(120, max_h), max_h_fraction));
       }
       else if (xfce_screen_position_is_right(pos))
       {
-        x = entry_x - popup_w - gap;
+        x = anchor_x - popup_w - gap;
         max_h = geo.height - 2 * margin;
         popup_h = MIN(desired_h, MIN(MAX(120, max_h), max_h_fraction));
       }
       else
       {
-        max_h = (geo.y + geo.height - (entry_y + entry_alloc.height)) - gap - margin;
+        max_h = (geo.y + geo.height - (anchor_y + anchor.height)) - gap - margin;
         popup_h = MIN(desired_h, MIN(MAX(120, max_h), max_h_fraction));
       }
 
@@ -212,7 +311,14 @@ openai_ask_plugin_move_popup_near_entry(OpenaiAskPlugin *self)
   }
 
   popup_h = MAX(120, popup_h);
-  openai_ask_log("popup move x=%d y=%d w=%d h=%d desired_h=%d", x, y, popup_w, popup_h, desired_h);
+  openai_ask_log("popup move x=%d y=%d w=%d h=%d desired_h=%d anchor_w=%d content_w=%d",
+                 x,
+                 y,
+                 popup_w,
+                 popup_h,
+                 desired_h,
+                 anchor.width,
+                 content_w);
   gtk_window_move(GTK_WINDOW(self->popup), x, y);
   gtk_window_resize(GTK_WINDOW(self->popup), popup_w, popup_h);
 }
@@ -576,6 +682,7 @@ openai_ask_plugin_load_settings(OpenaiAskPlugin *self)
   self->system_prompt = g_strdup("");
   self->temperature = 0.7;
   self->width_chars = 18;
+  self->reply_width_px = 0;
 
   g_autofree gchar *rc = xfce_panel_plugin_save_location(XFCE_PANEL_PLUGIN(self), FALSE);
   if (!rc)
@@ -612,6 +719,9 @@ openai_ask_plugin_load_settings(OpenaiAskPlugin *self)
 
   if (g_key_file_has_key(kf, KF_GROUP, KF_WIDTH_CHARS, NULL))
     self->width_chars = g_key_file_get_integer(kf, KF_GROUP, KF_WIDTH_CHARS, NULL);
+
+  if (g_key_file_has_key(kf, KF_GROUP, KF_REPLY_WIDTH_PX, NULL))
+    self->reply_width_px = g_key_file_get_integer(kf, KF_GROUP, KF_REPLY_WIDTH_PX, NULL);
 }
 
 static void
@@ -627,6 +737,7 @@ openai_ask_plugin_save_settings(OpenaiAskPlugin *self)
   g_key_file_set_string(kf, KF_GROUP, KF_SYSTEM_PROMPT, self->system_prompt ? self->system_prompt : "");
   g_key_file_set_double(kf, KF_GROUP, KF_TEMPERATURE, self->temperature);
   g_key_file_set_integer(kf, KF_GROUP, KF_WIDTH_CHARS, self->width_chars);
+  g_key_file_set_integer(kf, KF_GROUP, KF_REPLY_WIDTH_PX, self->reply_width_px);
 
   gsize len = 0;
   g_autofree gchar *data = g_key_file_to_data(kf, &len, NULL);
@@ -692,6 +803,14 @@ openai_ask_plugin_show_configure(XfcePanelPlugin *plugin, gpointer user_data)
   gtk_grid_attach(GTK_GRID(grid), width_label, 0, 4, 1, 1);
   gtk_grid_attach(GTK_GRID(grid), width_spin, 1, 4, 1, 1);
 
+  GtkWidget *reply_width_label = gtk_label_new("Reply width (px)");
+  gtk_widget_set_halign(reply_width_label, GTK_ALIGN_END);
+  GtkAdjustment *reply_width_adj = gtk_adjustment_new(self->reply_width_px, 0.0, 4000.0, 10.0, 50.0, 0.0);
+  GtkWidget *reply_width_spin = gtk_spin_button_new(reply_width_adj, 10.0, 0);
+  gtk_widget_set_tooltip_text(reply_width_spin, "0 = match question box width");
+  gtk_grid_attach(GTK_GRID(grid), reply_width_label, 0, 5, 1, 1);
+  gtk_grid_attach(GTK_GRID(grid), reply_width_spin, 1, 5, 1, 1);
+
   GtkWidget *key_label = gtk_label_new("API key (keyring)");
   gtk_widget_set_halign(key_label, GTK_ALIGN_END);
   GtkWidget *key_entry = gtk_entry_new();
@@ -704,9 +823,9 @@ openai_ask_plugin_show_configure(XfcePanelPlugin *plugin, gpointer user_data)
   gtk_box_pack_start(GTK_BOX(key_buttons), btn_save_key, FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(key_buttons), btn_clear_key, FALSE, FALSE, 0);
 
-  gtk_grid_attach(GTK_GRID(grid), key_label, 0, 5, 1, 1);
-  gtk_grid_attach(GTK_GRID(grid), key_entry, 1, 5, 1, 1);
-  gtk_grid_attach(GTK_GRID(grid), key_buttons, 1, 6, 1, 1);
+  gtk_grid_attach(GTK_GRID(grid), key_label, 0, 6, 1, 1);
+  gtk_grid_attach(GTK_GRID(grid), key_entry, 1, 6, 1, 1);
+  gtk_grid_attach(GTK_GRID(grid), key_buttons, 1, 7, 1, 1);
 
   OpenaiAskKeyDialogCtx key_ctx = {endpoint_entry, key_entry};
   g_signal_connect(btn_save_key, "clicked", G_CALLBACK(openai_ask_plugin_on_save_key_clicked), &key_ctx);
@@ -724,8 +843,11 @@ openai_ask_plugin_show_configure(XfcePanelPlugin *plugin, gpointer user_data)
     self->system_prompt = g_strdup(gtk_entry_get_text(GTK_ENTRY(system_entry)));
     self->temperature = gtk_spin_button_get_value(GTK_SPIN_BUTTON(temp_spin));
     self->width_chars = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(width_spin));
+    self->reply_width_px = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(reply_width_spin));
     if (self->width_chars < 6)
       self->width_chars = 6;
+    if (self->reply_width_px < 0)
+      self->reply_width_px = 0;
     if (self->entry)
       gtk_entry_set_width_chars(GTK_ENTRY(self->entry), self->width_chars);
     openai_ask_plugin_save_settings(self);
@@ -767,6 +889,7 @@ openai_ask_plugin_construct(XfcePanelPlugin *plugin)
 
   self->popup = gtk_window_new(GTK_WINDOW_POPUP);
   gtk_widget_set_name(self->popup, "openai-ask-popup");
+  openai_ask_plugin_enable_transparency(self->popup);
   gtk_window_set_decorated(GTK_WINDOW(self->popup), FALSE);
   gtk_window_set_resizable(GTK_WINDOW(self->popup), TRUE);
   gtk_window_set_skip_taskbar_hint(GTK_WINDOW(self->popup), TRUE);
@@ -783,12 +906,23 @@ openai_ask_plugin_construct(XfcePanelPlugin *plugin)
                    G_CALLBACK(openai_ask_plugin_on_screen_position_changed),
                    self);
 
+  GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  gtk_container_add(GTK_CONTAINER(self->popup), outer);
+
   GtkWidget *popover_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-  gtk_container_set_border_width(GTK_CONTAINER(popover_box), 10);
-  gtk_container_add(GTK_CONTAINER(self->popup), popover_box);
+  gtk_widget_set_name(popover_box, "openai-ask-frame");
+  gtk_container_set_border_width(GTK_CONTAINER(popover_box), 12);
+  gtk_widget_set_hexpand(popover_box, TRUE);
+  gtk_widget_set_vexpand(popover_box, TRUE);
+  gtk_box_pack_start(GTK_BOX(outer), popover_box, TRUE, TRUE, 0);
 
   self->header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
   gtk_widget_set_name(self->header, "openai-ask-header");
+  /* Match header left/right padding to the reply text padding for visual alignment. */
+  gtk_widget_set_margin_start(self->header, 14);
+  gtk_widget_set_margin_end(self->header, 14);
+  gtk_widget_set_margin_top(self->header, 10);
+  gtk_widget_set_margin_bottom(self->header, 10);
   self->popover_title = gtk_label_new("XFCE Ask");
   gtk_label_set_xalign(GTK_LABEL(self->popover_title), 0.0f);
   gtk_widget_set_hexpand(self->popover_title, TRUE);
@@ -809,6 +943,8 @@ openai_ask_plugin_construct(XfcePanelPlugin *plugin)
 
   self->popover_stack = gtk_stack_new();
   gtk_stack_set_transition_type(GTK_STACK(self->popover_stack), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+  gtk_widget_set_hexpand(self->popover_stack, TRUE);
+  gtk_widget_set_vexpand(self->popover_stack, TRUE);
   gtk_box_pack_start(GTK_BOX(popover_box), self->popover_stack, TRUE, TRUE, 0);
 
   GtkWidget *loading = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -820,6 +956,8 @@ openai_ask_plugin_construct(XfcePanelPlugin *plugin)
 
   self->scrolled = gtk_scrolled_window_new(NULL, NULL);
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(self->scrolled), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_widget_set_hexpand(self->scrolled, TRUE);
+  gtk_widget_set_vexpand(self->scrolled, TRUE);
 
   self->popover_label = gtk_label_new(NULL);
   gtk_label_set_selectable(GTK_LABEL(self->popover_label), TRUE);
@@ -827,6 +965,10 @@ openai_ask_plugin_construct(XfcePanelPlugin *plugin)
   gtk_label_set_line_wrap_mode(GTK_LABEL(self->popover_label), PANGO_WRAP_WORD_CHAR);
   gtk_label_set_xalign(GTK_LABEL(self->popover_label), 0.0f);
   gtk_label_set_yalign(GTK_LABEL(self->popover_label), 0.0f);
+  gtk_widget_set_margin_start(self->popover_label, 14);
+  gtk_widget_set_margin_end(self->popover_label, 14);
+  gtk_widget_set_margin_top(self->popover_label, 14);
+  gtk_widget_set_margin_bottom(self->popover_label, 14);
   gtk_container_add(GTK_CONTAINER(self->scrolled), self->popover_label);
   gtk_stack_add_named(GTK_STACK(self->popover_stack), self->scrolled, "answer");
 
@@ -878,4 +1020,5 @@ openai_ask_plugin_init(OpenaiAskPlugin *self)
 {
   self->temperature = 0.7;
   self->width_chars = 18;
+  self->reply_width_px = 0;
 }

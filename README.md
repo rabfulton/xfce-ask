@@ -1,6 +1,10 @@
 # XFCE Ask (XFCE panel plugin)
 
+![XFCE Ask screenshot](screenshots/screenshot.png)
+
 A small XFCE panel plugin for quick one-off questions to any OpenAI-compatible Chat Completions endpoint. Type a question in the panel entry and press Enter; the answer shows in a GTK popover.
+
+Works with any OpenAI-compatible endpoint, including local/self-hosted ones. If your endpoint does not require auth, leave the API key blank.
 
 ## Behavior
 
@@ -42,6 +46,8 @@ Right-click the plugin → Properties:
 The plugin writes a debug log to:
 
 - `~/.cache/openai-ask/openai-ask.log`
+
+Logging is disabled by default. Enable it by starting your session/panel with `XFCE_ASK_DEBUG=1`.
 
 Tail it while testing:
 

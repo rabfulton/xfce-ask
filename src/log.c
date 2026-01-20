@@ -4,10 +4,13 @@
 #include <stdio.h>
 
 static gchar *g_log_path = NULL;
+static gboolean g_log_enabled = FALSE;
 
 static const gchar *
 openai_ask_log_path(void)
 {
+  if (!g_log_enabled)
+    return NULL;
   if (g_log_path)
     return g_log_path;
 
@@ -25,13 +28,21 @@ openai_ask_log_path(void)
 void
 openai_ask_log_init(void)
 {
-  (void)openai_ask_log_path();
+  const gchar *env = g_getenv("XFCE_ASK_DEBUG");
+  if (!env || !*env)
+    env = g_getenv("OPENAI_ASK_DEBUG");
+  g_log_enabled = (env && *env && g_strcmp0(env, "0") != 0);
+
+  if (g_log_enabled)
+    (void)openai_ask_log_path();
 }
 
 void
 openai_ask_log(const gchar *fmt, ...)
 {
   const gchar *path = openai_ask_log_path();
+  if (!path)
+    return;
 
   va_list ap;
   va_start(ap, fmt);
