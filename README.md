@@ -30,6 +30,11 @@ make install
 xfce4-panel -r
 ```
 
+## AUR
+
+- AUR package: https://aur.archlinux.org/packages/xfce4-panel-xfce-ask-git
+- AUR `-git` PKGBUILD in this repo: `aur/xfce4-panel-xfce-ask-git/PKGBUILD`
+
 Then add the plugin in Panel Preferences → Items → `+` → “XFCE Ask”.
 
 ## Configure
