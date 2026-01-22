@@ -60,7 +60,7 @@ jobs:
           docker run --rm -v $PWD:/work debian:bookworm bash -c "
             apt-get update &&
             apt-get install -y /work/*.deb &&
-            test -f /usr/lib/xfce4/panel/plugins/libopenai-ask.so &&
+            dpkg -L xfce-ask | grep libopenai-ask.so &&
             echo 'DEB package OK'
           "
 
@@ -68,7 +68,7 @@ jobs:
         run: |
           docker run --rm -v $PWD:/work fedora:latest bash -c "
             dnf install -y /work/*.rpm &&
-            test -f /usr/lib64/xfce4/panel/plugins/libopenai-ask.so &&
+            rpm -ql xfce-ask | grep libopenai-ask.so &&
             echo 'RPM package OK'
           "
 
