@@ -69,6 +69,22 @@ If you use Arch Linux or a derivative thereof use:
 
 - AUR package: https://aur.archlinux.org/packages/xfce4-panel-xfce-ask-git
 
+## Pre-built Packages
+
+Download `.deb` or `.rpm` from the [Releases](https://github.com/rabfulton/xfce-ask/releases) page.
+
+Debian/Ubuntu:
+```sh
+sudo apt install ./xfce-ask_*.deb
+```
+
+Fedora:
+```sh
+sudo dnf install ./xfce-ask-*.rpm
+```
+
+Dependencies are installed automatically.
+
 ## Configure
 
 Right-click the plugin → Properties:
