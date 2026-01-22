@@ -25,6 +25,12 @@ jobs:
           make PREFIX=/usr
           make PREFIX=/usr DESTDIR=pkg install
 
+      - name: Build for RPM (lib64)
+        run: |
+          make clean
+          make PREFIX=/usr LIBDIR=/usr/lib64
+          make PREFIX=/usr LIBDIR=/usr/lib64 DESTDIR=pkg-rpm install
+
       - name: Create DEB
         run: |
           fpm -s dir -t deb \
@@ -47,7 +53,24 @@ jobs:
             --description "XFCE panel plugin for OpenAI-compatible chat endpoints" \
             --url "https://github.com/rabfulton/xfce-ask" \
             --license MIT \
-            -C pkg .
+            -C pkg-rpm .
+
+      - name: Test DEB package
+        run: |
+          docker run --rm -v $PWD:/work debian:bookworm bash -c "
+            apt-get update &&
+            apt-get install -y /work/*.deb &&
+            test -f /usr/lib/xfce4/panel/plugins/libopenai-ask.so &&
+            echo 'DEB package OK'
+          "
+
+      - name: Test RPM package
+        run: |
+          docker run --rm -v $PWD:/work fedora:latest bash -c "
+            dnf install -y /work/*.rpm &&
+            test -f /usr/lib64/xfce4/panel/plugins/libopenai-ask.so &&
+            echo 'RPM package OK'
+          "
 
       - name: Upload packages to release
         uses: softprops/action-gh-release@v2
