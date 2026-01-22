@@ -28,7 +28,7 @@ make
 ### Make
 
 ```sh
-make install
+sudo make install
 xfce4-panel -r
 ```
 

@@ -1,4 +1,4 @@
-PREFIX ?= $(HOME)/.local
+PREFIX ?= /usr/local
 DESTDIR ?=
 
 CC ?= cc
