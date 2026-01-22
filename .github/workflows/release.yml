@@ -1,0 +1,54 @@
+name: Build Packages
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxfce4panel-2.0-dev libgtk-3-dev libsoup-3.0-dev \
+            libjson-glib-dev libsecret-1-dev pkg-config ruby-dev build-essential
+          sudo gem install fpm
+
+      - name: Build
+        run: |
+          make PREFIX=/usr
+          make PREFIX=/usr DESTDIR=pkg install
+
+      - name: Create DEB
+        run: |
+          fpm -s dir -t deb \
+            -n xfce-ask \
+            -v ${{ github.ref_name }} \
+            -d "xfce4-panel" -d "libgtk-3-0" -d "libsoup-3.0-0" \
+            -d "libjson-glib-1.0-0" -d "libsecret-1-0" \
+            --description "XFCE panel plugin for OpenAI-compatible chat endpoints" \
+            --url "https://github.com/rabfulton/xfce-ask" \
+            --license MIT \
+            -C pkg .
+
+      - name: Create RPM
+        run: |
+          fpm -s dir -t rpm \
+            -n xfce-ask \
+            -v ${{ github.ref_name }} \
+            -d "xfce4-panel" -d "gtk3" -d "libsoup3" \
+            -d "json-glib" -d "libsecret" \
+            --description "XFCE panel plugin for OpenAI-compatible chat endpoints" \
+            --url "https://github.com/rabfulton/xfce-ask" \
+            --license MIT \
+            -C pkg .
+
+      - name: Upload packages to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.deb
+            *.rpm
