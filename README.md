@@ -17,19 +17,50 @@ License: MIT (see `LICENSE`).
 
 Dependencies (dev headers): `gtk3`, `libxfce4panel`, `libsoup-3`, `json-glib`, `libsecret`.
 
-### Make
+Arch:
+```sh
+sudo pacman -S xfce4-panel gtk3 libsoup3 json-glib libsecret pkgconf
+```
+
+Debian/Ubuntu:
+```sh
+sudo apt install libxfce4panel-2.0-dev libgtk-3-dev libsoup-3.0-dev libjson-glib-dev libsecret-1-dev pkg-config
+```
+
+Fedora:
+```sh
+sudo dnf install xfce4-panel-devel gtk3-devel libsoup3-devel json-glib-devel libsecret-devel pkgconf
+```
+
+openSUSE:
+```sh
+sudo zypper install xfce4-panel-devel gtk3-devel libsoup-3_0-devel json-glib-devel libsecret-devel pkgconf-pkg-config
+```
+
+Then build:
 
 ```sh
 make
 ```
 
-## Install (local)
-
-### Make
+## Install
 
 ```sh
 sudo make install
 xfce4-panel -r
+```
+
+By default, the Makefile auto-detects install paths from pkg-config. Override if needed:
+
+```sh
+# User-local install (no sudo)
+make PREFIX=$HOME/.local install
+
+# Explicit system install
+sudo make PREFIX=/usr install
+
+# Fedora/lib64 systems
+sudo make LIBDIR=/usr/lib64 install
 ```
 
 ## AUR

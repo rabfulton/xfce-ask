@@ -1,7 +1,10 @@
-PREFIX ?= /usr/local
+PREFIX  ?= $(shell pkg-config --variable=prefix libxfce4panel-2.0 2>/dev/null || echo /usr/local)
 DESTDIR ?=
+LIBDIR  ?= $(shell pkg-config --variable=libdir libxfce4panel-2.0 2>/dev/null || echo $(PREFIX)/lib)
+DATADIR ?= $(PREFIX)/share
 
-CC ?= cc
+CC      ?= cc
+INSTALL ?= install
 
 PLUGIN_NAME := openai-ask
 PLUGIN_SO := lib$(PLUGIN_NAME).so
@@ -26,8 +29,8 @@ CFLAGS += $(shell pkg-config --cflags $(PKGS))
 LDFLAGS ?=
 LDLIBS += $(shell pkg-config --libs $(PKGS))
 
-XFCE_PANEL_PLUGINDIR := $(DESTDIR)$(PREFIX)/lib/xfce4/panel/plugins
-XFCE_PANEL_DESKTOPDIR := $(DESTDIR)$(PREFIX)/share/xfce4/panel/plugins
+XFCE_PANEL_PLUGINDIR  := $(DESTDIR)$(LIBDIR)/xfce4/panel/plugins
+XFCE_PANEL_DESKTOPDIR := $(DESTDIR)$(DATADIR)/xfce4/panel/plugins
 
 .PHONY: all clean install uninstall dirs
 
@@ -43,9 +46,9 @@ $(BUILD_DIR)/$(PLUGIN_SO): $(PLUGIN_OBJECTS)
 	$(CC) -shared $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 install: all
-	install -d "$(XFCE_PANEL_PLUGINDIR)" "$(XFCE_PANEL_DESKTOPDIR)"
-	install -m 0755 "$(BUILD_DIR)/$(PLUGIN_SO)" "$(XFCE_PANEL_PLUGINDIR)/$(PLUGIN_SO)"
-	install -m 0644 "$(DATA_DIR)/$(PLUGIN_NAME).desktop.in" "$(XFCE_PANEL_DESKTOPDIR)/$(PLUGIN_NAME).desktop"
+	$(INSTALL) -d "$(XFCE_PANEL_PLUGINDIR)" "$(XFCE_PANEL_DESKTOPDIR)"
+	$(INSTALL) -m 0755 "$(BUILD_DIR)/$(PLUGIN_SO)" "$(XFCE_PANEL_PLUGINDIR)/$(PLUGIN_SO)"
+	$(INSTALL) -m 0644 "$(DATA_DIR)/$(PLUGIN_NAME).desktop.in" "$(XFCE_PANEL_DESKTOPDIR)/$(PLUGIN_NAME).desktop"
 
 uninstall:
 	rm -f "$(XFCE_PANEL_PLUGINDIR)/$(PLUGIN_SO)" "$(XFCE_PANEL_DESKTOPDIR)/$(PLUGIN_NAME).desktop"
