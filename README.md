@@ -107,3 +107,8 @@ Tail it while testing:
 ```sh
 tail -f ~/.cache/openai-ask/openai-ask.log
 ```
+
+## Other Useful Projects
+
+- Try my lightweight speech to text implementation [Auriscribe](https://github.com/rabfulton/Auriscribe)
+- For many more features try out [ChatGTK](https://github.com/rabfulton/ChatGTK)
